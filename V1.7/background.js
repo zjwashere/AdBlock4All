@@ -1,14 +1,12 @@
 // ============================================
-// OPTIMIZED BACKGROUND SCRIPT
+// OPTIMIZED BACKGROUND.JS
 // Key Improvements:
-// 1. Trie data structure for O(m) lookup instead of O(n)
-// 2. Batch storage updates to reduce I/O
-// 3. LRU cache for recent lookups
-// 4. Debounced badge updates
-// 5. Memory-efficient data structures
+// 1. Reduced memory usage with better caching
+// 2. Batched operations for better performance
+// 3. Optimized Trie structure
+// 4. Efficient event handling
 // ============================================
 
-// Trie Node for efficient pattern matching
 class TrieNode {
   constructor() {
     this.children = new Map();
@@ -23,7 +21,6 @@ class FilterTrie {
     this.patternCount = 0;
   }
 
-  // Insert a filter pattern into the Trie
   insert(pattern, category = 'Ad') {
     let node = this.root;
     const cleanPattern = this._cleanPattern(pattern);
@@ -40,7 +37,6 @@ class FilterTrie {
     this.patternCount++;
   }
 
-  // Clean and normalize pattern
   _cleanPattern(pattern) {
     return pattern
       .replace(/^\|\|/, '')
@@ -51,11 +47,9 @@ class FilterTrie {
       .toLowerCase();
   }
 
-  // Check if URL matches any pattern (optimized search)
   matches(url) {
     const cleanUrl = url.toLowerCase();
     
-    // Check all starting positions in URL
     for (let i = 0; i < cleanUrl.length; i++) {
       const result = this._searchFrom(cleanUrl, i);
       if (result) return result;
@@ -70,7 +64,6 @@ class FilterTrie {
     for (let i = startIdx; i < url.length && node; i++) {
       const char = url[i];
       
-      // Check if current position is a valid pattern
       if (node.isPattern) {
         return { matched: true, category: node.category };
       }
@@ -82,7 +75,6 @@ class FilterTrie {
   }
 }
 
-// LRU Cache for recent URL checks
 class LRUCache {
   constructor(maxSize = 1000) {
     this.cache = new Map();
@@ -92,7 +84,6 @@ class LRUCache {
   get(key) {
     if (!this.cache.has(key)) return undefined;
     
-    // Move to end (most recently used)
     const value = this.cache.get(key);
     this.cache.delete(key);
     this.cache.set(key, value);
@@ -100,7 +91,6 @@ class LRUCache {
   }
 
   set(key, value) {
-    // Remove oldest if at capacity
     if (this.cache.size >= this.maxSize) {
       const firstKey = this.cache.keys().next().value;
       this.cache.delete(firstKey);
@@ -115,23 +105,25 @@ class LRUCache {
 }
 
 // ============================================
-// GLOBAL STATE
+// OPTIMIZED STATE MANAGEMENT
 // ============================================
 const filterTrie = new FilterTrie();
-const urlCache = new LRUCache(1000);
-
-// Use Map for O(1) lookups instead of object
+const urlCache = new LRUCache(2000); // Increased for better hit rate
 const blockedUrlsByTab = new Map();
-const MAX_STORED_PER_TAB = 100;
+const MAX_STORED_PER_TAB = 50; // Reduced from 100 to save memory
 
-// Batch update queue
-let pendingStorageUpdates = false;
+// Batching configuration
+let pendingStorageUpdates = new Set(); // Track which tabs need updates
 let storageUpdateTimer = null;
-const STORAGE_BATCH_DELAY = 500; // Batch updates every 500ms
+const STORAGE_BATCH_DELAY = 1000; // Increased from 500ms
 
-// Badge update debouncing
+// Badge updates - debounced per tab
 const badgeUpdateTimers = new Map();
-const BADGE_UPDATE_DELAY = 300;
+const BADGE_UPDATE_DELAY = 500; // Increased from 300ms
+
+// XP and Coins configuration
+const XP_PER_AD = 3;
+const COINS_PER_AD = 1;
 
 // ============================================
 // OPTIMIZED FILTER LOADING
@@ -150,62 +142,67 @@ async function loadFilterList() {
       { regex: /(ad|banner|popup|sponsor)/i, category: 'Ad' }
     ];
     
-    // Batch insert for better performance
-    for (const line of lines) {
-      if (!line.trim() || line.startsWith('!') || line.startsWith('[') || 
-          line.includes('##') || line.includes('#@#') || line.startsWith('@@')) {
-        continue;
-      }
+    // Process in chunks to avoid blocking
+    const CHUNK_SIZE = 1000;
+    for (let i = 0; i < lines.length; i += CHUNK_SIZE) {
+      const chunk = lines.slice(i, i + CHUNK_SIZE);
       
-      let filter = line.trim();
-      if (filter.includes('$')) {
-        filter = filter.split('$')[0];
-      }
-      
-      if (!filter) continue;
-      
-      // Determine category
-      let category = 'Ad';
-      for (const cat of categorizers) {
-        if (cat.regex.test(filter)) {
-          category = cat.category;
-          break;
+      for (const line of chunk) {
+        if (!line.trim() || line.startsWith('!') || line.startsWith('[') || 
+            line.includes('##') || line.includes('#@#') || line.startsWith('@@')) {
+          continue;
         }
+        
+        let filter = line.trim();
+        if (filter.includes('$')) {
+          filter = filter.split('$')[0];
+        }
+        
+        if (!filter) continue;
+        
+        let category = 'Ad';
+        for (const cat of categorizers) {
+          if (cat.regex.test(filter)) {
+            category = cat.category;
+            break;
+          }
+        }
+        
+        filterTrie.insert(filter, category);
+        loaded++;
       }
       
-      filterTrie.insert(filter, category);
-      loaded++;
+      // Yield to event loop every chunk
+      if (i + CHUNK_SIZE < lines.length) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
     }
     
     console.timeEnd('FilterList Load');
-    console.log(`Loaded ${loaded} patterns into Trie (${filterTrie.patternCount} nodes)`);
+    console.log(`Loaded ${loaded} patterns`);
   } catch (error) {
     console.error('Error loading filter list:', error);
   }
 }
 
 // ============================================
-// OPTIMIZED URL MATCHING
+// OPTIMIZED URL CHECKING
 // ============================================
 function checkUrlBlocked(url) {
-  // Check cache first
   if (urlCache.has(url)) {
     return urlCache.get(url);
   }
   
-  // Check against Trie
   const result = filterTrie.matches(url);
-  
-  // Cache result
   urlCache.set(url, result);
   
   return result;
 }
 
 // ============================================
-// OPTIMIZED URL SHORTENING
+// URL SHORTENING WITH CACHE
 // ============================================
-const shortenUrl = (() => {
+const urlShortener = (() => {
   const cache = new Map();
   const MAX_CACHE = 500;
   
@@ -220,7 +217,6 @@ const shortenUrl = (() => {
       shortened = url.substring(0, halfLength) + '...' + url.substring(url.length - halfLength);
     }
     
-    // Manage cache size
     if (cache.size >= MAX_CACHE) {
       const firstKey = cache.keys().next().value;
       cache.delete(firstKey);
@@ -234,47 +230,57 @@ const shortenUrl = (() => {
 // ============================================
 // BATCHED STORAGE UPDATES
 // ============================================
-function scheduleBatchedStorageUpdate() {
+function scheduleBatchedStorageUpdate(tabId) {
+  pendingStorageUpdates.add(tabId);
+  
   if (storageUpdateTimer) {
-    clearTimeout(storageUpdateTimer);
+    return; // Already scheduled
   }
   
-  pendingStorageUpdates = true;
-  
   storageUpdateTimer = setTimeout(() => {
-    if (pendingStorageUpdates) {
-      flushStorageUpdates();
-    }
+    flushStorageUpdates();
+    storageUpdateTimer = null;
   }, STORAGE_BATCH_DELAY);
 }
 
 function flushStorageUpdates() {
-  pendingStorageUpdates = false;
+  if (pendingStorageUpdates.size === 0) return;
   
-  // Convert Map to object for storage
   const dataToStore = {};
-  blockedUrlsByTab.forEach((value, key) => {
-    dataToStore[key] = value;
+  pendingStorageUpdates.forEach(tabId => {
+    if (blockedUrlsByTab.has(tabId)) {
+      dataToStore[tabId] = blockedUrlsByTab.get(tabId);
+    }
   });
   
   chrome.storage.local.set({ blockedUrlsByTab: dataToStore });
+  pendingStorageUpdates.clear();
 }
 
 // ============================================
 // DEBOUNCED BADGE UPDATES
 // ============================================
 function updateBadgeForTab(tabId) {
-  // Clear existing timer
   if (badgeUpdateTimers.has(tabId)) {
     clearTimeout(badgeUpdateTimers.get(tabId));
   }
   
-  // Schedule debounced update
   const timer = setTimeout(() => {
-    chrome.storage.local.get(['showBadge'], (result) => {
+    chrome.storage.local.get(['showBadge', 'adBlockerEnabled'], (result) => {
       const showBadge = result.showBadge !== false;
+      const enabled = result.adBlockerEnabled !== false;
       
-      if (showBadge && blockedUrlsByTab.has(tabId)) {
+      // Set icon based on enabled state
+      const iconPath = enabled ? 'icons/tempIcon.png' : 'icons/tempIcon_grey.png';
+      chrome.action.setIcon({ path: iconPath, tabId });
+      
+      if (!enabled || !showBadge) {
+        chrome.action.setBadgeText({ text: '', tabId });
+        return;
+      }
+      
+      // Show current tab's blocked count
+      if (blockedUrlsByTab.has(tabId)) {
         const count = blockedUrlsByTab.get(tabId).totalCount || 0;
         
         if (count > 0) {
@@ -282,7 +288,7 @@ function updateBadgeForTab(tabId) {
                             count >= 1000 ? (count / 1000).toFixed(1) + 'K' :
                             count.toString();
           chrome.action.setBadgeText({ text: badgeText, tabId });
-          chrome.action.setBadgeBackgroundColor({ color: '#e74c3c', tabId });
+          chrome.action.setBadgeBackgroundColor({ color: '#f44336', tabId });
         } else {
           chrome.action.setBadgeText({ text: '', tabId });
         }
@@ -298,79 +304,104 @@ function updateBadgeForTab(tabId) {
 }
 
 // ============================================
-// OPTIMIZED WEB REQUEST HANDLER
+// BATCHED XP/COINS UPDATES
+// ============================================
+let xpCoinsUpdateTimer = null;
+let pendingXPCoins = { xp: 0, coins: 0 };
+
+function awardXPAndCoins() {
+  pendingXPCoins.xp += XP_PER_AD;
+  pendingXPCoins.coins += COINS_PER_AD;
+  
+  if (xpCoinsUpdateTimer) {
+    return;
+  }
+  
+  xpCoinsUpdateTimer = setTimeout(() => {
+    const { xp, coins } = pendingXPCoins;
+    
+    chrome.storage.local.get(['userXP', 'userCoins'], (result) => {
+      chrome.storage.local.set({
+        userXP: (result.userXP || 0) + xp,
+        userCoins: (result.userCoins || 0) + coins
+      });
+    });
+    
+    pendingXPCoins = { xp: 0, coins: 0 };
+    xpCoinsUpdateTimer = null;
+  }, 1000);
+}
+
+// ============================================
+// WEB REQUEST HANDLER
 // ============================================
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     const { url, tabId } = details;
     
-    // Skip invalid tabs
     if (tabId < 0) return;
     
-    // Check if blocked
-    const matchResult = checkUrlBlocked(url);
-    
-    if (matchResult?.matched) {
-      const timestamp = Date.now(); // Use timestamp instead of ISO string
-      const shortenedUrl = shortenUrl(url, 100);
-      const category = matchResult.category || 'Ad';
+    // Check enabled state from memory cache
+    chrome.storage.local.get(['adBlockerEnabled'], (result) => {
+      if (result.adBlockerEnabled === false) return;
       
-      // Get or create tab data
-      if (!blockedUrlsByTab.has(tabId)) {
-        blockedUrlsByTab.set(tabId, {
-          domain: '',
-          urls: [],
-          totalCount: 0
+      const matchResult = checkUrlBlocked(url);
+      
+      if (matchResult?.matched) {
+        const timestamp = Date.now();
+        const shortenedUrl = urlShortener(url, 100);
+        const category = matchResult.category || 'Ad';
+        
+        if (!blockedUrlsByTab.has(tabId)) {
+          blockedUrlsByTab.set(tabId, {
+            domain: '',
+            urls: [],
+            totalCount: 0
+          });
+        }
+        
+        const tabData = blockedUrlsByTab.get(tabId);
+        
+        // Only store if under limit
+        if (tabData.urls.length < MAX_STORED_PER_TAB) {
+          tabData.urls.unshift({ 
+            url: shortenedUrl, 
+            fullUrl: url, 
+            timestamp,
+            category
+          });
+        }
+        
+        tabData.totalCount++;
+        
+        scheduleBatchedStorageUpdate(tabId);
+        
+        // Batched total update
+        chrome.storage.local.get(['totalBlockedAllTime'], (result) => {
+          chrome.storage.local.set({ 
+            totalBlockedAllTime: (result.totalBlockedAllTime || 0) + 1 
+          });
         });
+        
+        awardXPAndCoins();
+        updateBadgeForTab(tabId);
       }
-      
-      const tabData = blockedUrlsByTab.get(tabId);
-      
-      // Add to circular buffer (more memory efficient)
-      const newEntry = { 
-        url: shortenedUrl, 
-        fullUrl: url, 
-        timestamp,
-        category
-      };
-      
-      tabData.urls.unshift(newEntry);
-      
-      // Trim to max size
-      if (tabData.urls.length > MAX_STORED_PER_TAB) {
-        tabData.urls.length = MAX_STORED_PER_TAB;
-      }
-      
-      tabData.totalCount++;
-      
-      // Schedule batched storage update
-      scheduleBatchedStorageUpdate();
-      
-      // Increment global counter (batched)
-      chrome.storage.local.get(['totalBlockedAllTime'], (result) => {
-        const newTotal = (result.totalBlockedAllTime || 0) + 1;
-        chrome.storage.local.set({ totalBlockedAllTime: newTotal });
-      });
-      
-      // Update badge (debounced)
-      updateBadgeForTab(tabId);
-    }
+    });
   },
   { urls: ["<all_urls>"] }
 );
 
 // ============================================
-// TAB LIFECYCLE MANAGEMENT
+// TAB EVENT HANDLERS
 // ============================================
 chrome.tabs.onRemoved.addListener((tabId) => {
   blockedUrlsByTab.delete(tabId);
+  pendingStorageUpdates.delete(tabId);
   
   if (badgeUpdateTimers.has(tabId)) {
     clearTimeout(badgeUpdateTimers.get(tabId));
     badgeUpdateTimers.delete(tabId);
   }
-  
-  scheduleBatchedStorageUpdate();
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -388,7 +419,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
             urls: [],
             totalCount: 0
           });
-          scheduleBatchedStorageUpdate();
+          scheduleBatchedStorageUpdate(tabId);
           updateBadgeForTab(tabId);
         }
       }
@@ -410,11 +441,37 @@ chrome.runtime.onInstalled.addListener(() => {
     displayActionCountAsBadgeText: false
   });
   
-  chrome.storage.local.get(['totalBlockedAllTime', 'showBadge'], (result) => {
+  chrome.storage.local.get([
+    'totalBlockedAllTime', 
+    'showBadge', 
+    'userXP', 
+    'userCoins', 
+    'userLevel',
+    'ownedAvatars',
+    'equippedAvatar',
+    'adBlockerEnabled'
+  ], (result) => {
+    const totalBlocked = result.totalBlockedAllTime || 0;
+    const enabled = result.adBlockerEnabled !== false;
+    
     chrome.storage.local.set({ 
       blockedUrlsByTab: {},
-      totalBlockedAllTime: result.totalBlockedAllTime || 0,
-      showBadge: result.showBadge !== false
+      totalBlockedAllTime: totalBlocked,
+      showBadge: result.showBadge !== false,
+      userXP: result.userXP !== undefined ? result.userXP : totalBlocked * XP_PER_AD,
+      userCoins: result.userCoins !== undefined ? result.userCoins : totalBlocked * COINS_PER_AD,
+      userLevel: result.userLevel || 1,
+      ownedAvatars: result.ownedAvatars || ['avatar_default'],
+      equippedAvatar: result.equippedAvatar || '👤',
+      adBlockerEnabled: enabled
+    });
+    
+    // Set initial icon state
+    const iconPath = enabled ? 'icons/tempIcon.png' : 'icons/tempIcon_grey.png';
+    chrome.tabs.query({}, (tabs) => {
+      tabs.forEach(tab => {
+        chrome.action.setIcon({ path: iconPath, tabId: tab.id });
+      });
     });
   });
   
@@ -427,25 +484,14 @@ chrome.runtime.onStartup.addListener(() => {
   chrome.storage.local.get(['blockedUrlsByTab'], (result) => {
     const stored = result.blockedUrlsByTab || {};
     
-    // Convert object back to Map
     blockedUrlsByTab.clear();
     Object.entries(stored).forEach(([tabId, data]) => {
       blockedUrlsByTab.set(parseInt(tabId), data);
     });
     
-    // Update badges
     chrome.tabs.query({}, (tabs) => {
       tabs.forEach(tab => updateBadgeForTab(tab.id));
     });
-  });
-});
-
-// Initial load
-loadFilterList();
-chrome.storage.local.get(['blockedUrlsByTab'], (result) => {
-  const stored = result.blockedUrlsByTab || {};
-  Object.entries(stored).forEach(([tabId, data]) => {
-    blockedUrlsByTab.set(parseInt(tabId), data);
   });
 });
 
@@ -458,7 +504,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const tabData = blockedUrlsByTab.get(tabId);
     
     if (tabData) {
-      // Convert timestamps back to readable format
       const urls = tabData.urls.map(entry => ({
         ...entry,
         timestamp: new Date(entry.timestamp).toISOString()
@@ -484,7 +529,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (blockedUrlsByTab.has(tabId)) {
       const tabData = blockedUrlsByTab.get(tabId);
       tabData.urls = [];
-      scheduleBatchedStorageUpdate();
+      scheduleBatchedStorageUpdate(tabId);
     }
     
     sendResponse({ success: true });
@@ -496,14 +541,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
     
+  } else if (request.action === 'toggleAdBlocker') {
+    const enabled = request.enabled;
+    const iconPath = enabled ? 'icons/tempIcon.png' : 'icons/tempIcon_grey.png';
+    
+    chrome.storage.local.set({ adBlockerEnabled: enabled }, () => {
+      chrome.tabs.query({}, (tabs) => {
+        tabs.forEach(tab => {
+          chrome.action.setIcon({ path: iconPath, tabId: tab.id });
+          if (enabled) {
+            updateBadgeForTab(tab.id);
+          } else {
+            chrome.action.setBadgeText({ text: '', tabId: tab.id });
+          }
+        });
+      });
+      sendResponse({ success: true });
+    });
+    return true;
+    
   } else if (request.action === 'resetAllData') {
     blockedUrlsByTab.clear();
     urlCache.cache.clear();
+    pendingStorageUpdates.clear();
     
     chrome.storage.local.set({ 
       blockedUrlsByTab: {},
       totalBlockedAllTime: 0,
-      userRank: 1
+      userRank: 1,
+      userXP: 0,
+      userCoins: 0,
+      userLevel: 1,
+      ownedAvatars: ['avatar_default'],
+      equippedAvatar: '👤'
     }, () => {
       chrome.tabs.query({}, (tabs) => {
         tabs.forEach(tab => {
@@ -524,20 +594,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     sendResponse({ success: true });
     return true;
-    
-  } else if (request.action === 'getAllBlockedUrls') {
-    const allUrls = [];
-    blockedUrlsByTab.forEach(tabData => {
-      allUrls.push(...tabData.urls);
-    });
-    sendResponse({ blockedUrls: allUrls });
-    return true;
   }
 });
 
-// Cleanup on unload
+// ============================================
+// CLEANUP ON UNLOAD
+// ============================================
 self.addEventListener('unload', () => {
-  if (pendingStorageUpdates) {
+  if (pendingStorageUpdates.size > 0) {
     flushStorageUpdates();
   }
+});
+
+// Initial load
+loadFilterList();
+chrome.storage.local.get(['blockedUrlsByTab'], (result) => {
+  const stored = result.blockedUrlsByTab || {};
+  Object.entries(stored).forEach(([tabId, data]) => {
+    blockedUrlsByTab.set(parseInt(tabId), data);
+  });
 });
