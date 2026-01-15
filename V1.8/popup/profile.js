@@ -12,6 +12,7 @@ const DOM = {
   xpNeeded: document.getElementById('xpNeeded'),
   xpBarFill: document.getElementById('xpBarFill'),
   openShopBtn: document.getElementById('openShopBtn'),
+  shareBtn: document.getElementById('shareBtn'),
   viewAchievementsBtn: document.getElementById('viewAchievementsBtn')
 };
 
@@ -88,6 +89,10 @@ DOM.goBack.addEventListener('click', () => {
 
 DOM.openShopBtn.addEventListener('click', () => {
   window.location.href = 'shop.html';
+});
+
+DOM.shareBtn.addEventListener('click', () => {
+  window.location.href = 'share.html';
 });
 
 DOM.viewAchievementsBtn.addEventListener('click', () => {

@@ -26,7 +26,7 @@
                   stroke-dashoffset="119.38"></circle>
         </svg>
         <span class="profile-avatar-inner" id="profileIcon">👤</span>
-        <span class="profile-level-badge" id="profileLevel">1</span>
+        <span class="profile-level-badge-main" id="profileLevel">1</span>
       </button>
       <button class="icon-btn" id="settingsBtn" title="Settings">⚙️</button>
     </div>
@@ -53,6 +53,33 @@
       <div>
         <div class="total-label">Total Blocked (All Time)</div>
         <div class="total-count" id="totalBlocked">0</div>
+      </div>
+    </div>
+    
+    <!-- Time Saved -->
+    <div class="total-blocked-section">
+      <div>
+        <div class="total-label">Time Saved</div>
+        <div class="total-count" id="timeSaved">0s</div>
+      </div>
+    </div>
+    
+    <!-- Data Saved -->
+    <div class="total-blocked-section">
+      <div>
+        <div class="total-label">Data Saved</div>
+        <div class="total-count" id="dataSaved">0 KB</div>
+      </div>
+    </div>
+    
+    <!-- Daily Streak -->
+    <div class="total-blocked-section">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 20px;">🔥</span>
+        <div>
+          <div class="total-label">Daily Streak</div>
+          <div class="total-count" id="dailyStreak">0 days</div>
+        </div>
       </div>
     </div>
     

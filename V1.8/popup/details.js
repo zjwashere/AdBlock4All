@@ -5,9 +5,11 @@
 // 2. Reduced update frequency
 // 3. Efficient DOM manipulation
 // 4. Cached elements
+// 5. Fixed domain extraction from URLs
 // ============================================
 
 let currentTabId = null;
+let currentTabUrl = null;
 
 // Cache DOM elements
 const DOM = {
@@ -22,12 +24,25 @@ const DOM = {
 // State tracking
 let lastRenderedData = null;
 
+// Extract domain from URL
+function extractDomain(url) {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname;
+  } catch (e) {
+    // If URL parsing fails, try to extract domain manually
+    const match = url.match(/^(?:https?:\/\/)?(?:www\.)?([^\/\?#]+)/i);
+    return match ? match[1] : 'unknown';
+  }
+}
+
 async function init() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const currentTab = tabs[0];
   
   if (currentTab) {
     currentTabId = currentTab.id;
+    currentTabUrl = currentTab.url;
     loadBlockedUrls();
   }
 }
@@ -45,8 +60,13 @@ function loadBlockedUrls() {
     if (!response) return;
     
     const blockedUrls = response.blockedUrls || [];
-    const domain = response.domain || 'unknown';
+    let domain = response.domain || '';
     const totalCount = response.totalCount || 0;
+    
+    // If domain is empty or invalid, extract from current tab URL
+    if (!domain || domain === 'unknown' || domain === '') {
+      domain = extractDomain(currentTabUrl || '');
+    }
     
     displayBlockedUrls(blockedUrls, domain, totalCount);
   });
@@ -64,7 +84,7 @@ function displayBlockedUrls(blockedUrls, domain, totalCount) {
   // Update count
   DOM.count.textContent = totalCount.toLocaleString();
   
-  // Update title
+  // Update title with proper domain
   if (DOM.pageTitle) {
     DOM.pageTitle.textContent = `🛡️ Block Log - ${domain}`;
   }
@@ -170,7 +190,6 @@ let refreshInterval;
 let isVisible = true;
 
 function startAutoRefresh() {
-  // Increase interval from 200ms to 1000ms
   refreshInterval = setInterval(() => {
     if (isVisible) {
       loadBlockedUrls();

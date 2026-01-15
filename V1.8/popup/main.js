@@ -1,10 +1,9 @@
 // ============================================
-// OPTIMIZED MAIN.JS
+// OPTIMIZED MAIN.JS WITH REAL-TIME LEVEL UPDATES
 // Key Improvements:
-// 1. RequestAnimationFrame for smooth updates
-// 2. Differential rendering (only update changed values)
-// 3. Efficient memory caching
-// 4. Reduced redundant operations
+// 1. Real-time profile level and XP circle updates
+// 2. Fixed time/data rounding issues
+// 3. Proper differential rendering
 // ============================================
 
 // Cache DOM references
@@ -13,6 +12,9 @@ const DOM = {
   adCount: document.getElementById('adCount'),
   trackerCount: document.getElementById('trackerCount'),
   totalBlocked: document.getElementById('totalBlocked'),
+  timeSaved: document.getElementById('timeSaved'),
+  dataSaved: document.getElementById('dataSaved'),
+  dailyStreak: document.getElementById('dailyStreak'),
   rankDisplay: document.getElementById('rankDisplay'),
   btnLearnMore: document.getElementById('btnLearnMore'),
   btnLeaderboard: document.getElementById('btnLeaderboard'),
@@ -70,17 +72,56 @@ function calculateLevelFromXP(xp) {
   return { level, currentLevelXP: xp - totalXP };
 }
 
+// Format time saved - Accurate to 2 decimal places
+function formatTime(seconds) {
+  // Keep 2 decimal precision to avoid floating point errors like x.x0000000002
+  seconds = Math.round(seconds * 100) / 100;
+  
+  if (seconds < 60) return `${seconds.toFixed(2)}s`;
+  
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = (seconds % 60).toFixed(2);
+  
+  if (days > 0) {
+    return `${days}d ${hours}h ${minutes}m`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${secs}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  }
+  return `${secs}s`;
+}
+
+// Format data saved - FIXED rounding
+function formatData(kb) {
+  // Round to avoid floating point issues
+  kb = Math.round(kb);
+  
+  if (kb < 1024) return `${kb} KB`;
+  if (kb < 1048576) return `${(kb / 1024).toFixed(1)} MB`;
+  return `${(kb / 1048576).toFixed(2)} GB`;
+}
+
 // State tracking - ONLY update DOM when values change
 let currentTabId = null;
 let lastState = {
   adCount: -1,
   trackerCount: -1,
   totalBlocked: -1,
+  timeSaved: -1,
+  dataSaved: -1,
+  dailyStreak: -1,
   tabBlocked: -1,
   rank: -1,
   enabled: true,
   domain: '',
   profileLevel: -1,
+  profileXP: -1,
+  profileAvatar: '',
   topBadgeIcon: '',
   achievementProgress: -1
 };
@@ -122,7 +163,7 @@ async function init() {
 // ============================================
 let updateFrameId = null;
 let lastUpdateTime = 0;
-const UPDATE_INTERVAL = 1000; // Increased from 500ms
+const UPDATE_INTERVAL = 500; // Faster updates for real-time feel
 
 function startUpdateLoop() {
   function loop(timestamp) {
@@ -168,7 +209,6 @@ function updateStats() {
       }
     }
 
-    // ONLY update DOM if values changed
     if (lastState.adCount !== adCount) {
       DOM.adCount.textContent = adCount;
       lastState.adCount = adCount;
@@ -185,6 +225,7 @@ function updateStats() {
   });
   
   updateTotalAndRank();
+  updateProfileDisplay(); // Update profile on every loop
 }
 
 // ============================================
@@ -192,7 +233,7 @@ function updateStats() {
 // ============================================
 let totalRankCache = null;
 let totalRankCacheTime = 0;
-const CACHE_DURATION = 2000; // Cache for 2 seconds
+const CACHE_DURATION = 500; // Reduced for faster updates
 
 function updateTotalAndRank() {
   const now = Date.now();
@@ -202,13 +243,26 @@ function updateTotalAndRank() {
     return;
   }
   
-  chrome.storage.local.get(['totalBlockedAllTime', 'userRank'], (result) => {
+  chrome.storage.local.get([
+    'totalBlockedAllTime',
+    'totalTimeSaved',
+    'totalDataSaved',
+    'dailyStreak',
+    'userRank'
+  ], (result) => {
     if (chrome.runtime.lastError) return;
+    
+    console.log('Storage values:', result);
     
     const data = {
       totalBlocked: result.totalBlockedAllTime || 0,
+      timeSaved: result.totalTimeSaved || 0,
+      dataSaved: result.totalDataSaved || 0,
+      dailyStreak: result.dailyStreak || 0,
       rank: result.userRank || 1
     };
+    
+    console.log('Processed data:', data);
     
     totalRankCache = data;
     totalRankCacheTime = now;
@@ -222,6 +276,25 @@ function applyTotalAndRank(data) {
     DOM.totalBlocked.textContent = data.totalBlocked.toLocaleString();
     lastState.totalBlocked = data.totalBlocked;
     updateAchievementProgress();
+  }
+  
+  // Always update time/data display - don't cache the formatted string
+  const formattedTime = formatTime(data.timeSaved);
+  console.log('Formatting time:', data.timeSaved, '→', formattedTime);
+  if (DOM.timeSaved.textContent !== formattedTime) {
+    DOM.timeSaved.textContent = formattedTime;
+    lastState.timeSaved = data.timeSaved;
+  }
+  
+  const formattedData = formatData(data.dataSaved);
+  if (DOM.dataSaved.textContent !== formattedData) {
+    DOM.dataSaved.textContent = formattedData;
+    lastState.dataSaved = data.dataSaved;
+  }
+  
+  if (lastState.dailyStreak !== data.dailyStreak) {
+    DOM.dailyStreak.textContent = data.dailyStreak === 1 ? '1 day' : `${data.dailyStreak} days`;
+    lastState.dailyStreak = data.dailyStreak;
   }
   
   if (lastState.rank !== data.rank) {
@@ -239,7 +312,6 @@ let achievementCacheTime = 0;
 function updateAchievementProgress() {
   const now = Date.now();
   
-  // Use cached value if recent
   if (achievementCache && (now - achievementCacheTime) < CACHE_DURATION) {
     applyAchievementProgress(achievementCache);
     return;
@@ -248,7 +320,6 @@ function updateAchievementProgress() {
   chrome.storage.local.get(['totalBlockedAllTime'], (result) => {
     const total = result.totalBlockedAllTime || 0;
     
-    // Find highest unlocked badge
     let topBadge = badges[0];
     for (const badge of badges) {
       if (total >= badge.threshold) {
@@ -258,7 +329,6 @@ function updateAchievementProgress() {
       }
     }
     
-    // Find next badge to unlock
     let nextBadge = null;
     for (const badge of badges) {
       if (total < badge.threshold) {
@@ -283,13 +353,11 @@ function updateAchievementProgress() {
 function applyAchievementProgress(data) {
   const { topBadge, nextBadge, total } = data;
   
-  // Update icon
   if (lastState.topBadgeIcon !== topBadge.icon) {
     DOM.topBadgeIcon.textContent = topBadge.icon;
     lastState.topBadgeIcon = topBadge.icon;
   }
   
-  // Update progress bar and text
   if (nextBadge) {
     const prevThreshold = topBadge.threshold;
     const range = nextBadge.threshold - prevThreshold;
@@ -319,7 +387,7 @@ function applyAchievementProgress(data) {
 }
 
 // ============================================
-// PROFILE DISPLAY
+// PROFILE DISPLAY - REAL-TIME UPDATES
 // ============================================
 let profileCache = null;
 let profileCacheTime = 0;
@@ -327,19 +395,20 @@ let profileCacheTime = 0;
 function updateProfileDisplay() {
   const now = Date.now();
   
-  if (profileCache && (now - profileCacheTime) < CACHE_DURATION) {
-    applyProfileDisplay(profileCache);
-    return;
-  }
-  
+  // Force update every cycle (no cache for profile)
   chrome.storage.local.get(['userXP', 'userLevel', 'equippedAvatar'], (result) => {
     const xp = result.userXP || 0;
-    const level = result.userLevel || 1;
+    let level = result.userLevel || 1;
     const avatar = result.equippedAvatar || '👤';
     
+    // Recalculate level from XP to ensure accuracy
+    const calculated = calculateLevelFromXP(xp);
+    if (calculated.level !== level) {
+      level = calculated.level;
+      chrome.storage.local.set({ userLevel: level });
+    }
+    
     const data = { xp, level, avatar };
-    profileCache = data;
-    profileCacheTime = now;
     
     applyProfileDisplay(data);
   });
@@ -348,22 +417,30 @@ function updateProfileDisplay() {
 function applyProfileDisplay(data) {
   const { xp, level, avatar } = data;
   
+  // Update level badge
   if (lastState.profileLevel !== level) {
     DOM.profileLevel.textContent = level;
     lastState.profileLevel = level;
   }
   
-  DOM.profileIcon.textContent = avatar;
+  // Update avatar
+  if (lastState.profileAvatar !== avatar) {
+    DOM.profileIcon.textContent = avatar;
+    lastState.profileAvatar = avatar;
+  }
   
-  // Calculate XP progress for circle
-  const { currentLevelXP } = calculateLevelFromXP(xp);
-  const xpNeeded = calculateXPNeeded(level);
-  const progress = currentLevelXP / xpNeeded;
-  
-  const circumference = 119.38;
-  const offset = circumference - (progress * circumference);
-  
-  DOM.profileProgressCircle.style.strokeDashoffset = offset;
+  // Update XP circle - recalculate every time for smooth animation
+  if (lastState.profileXP !== xp) {
+    const { currentLevelXP } = calculateLevelFromXP(xp);
+    const xpNeeded = calculateXPNeeded(level);
+    const progress = Math.min(currentLevelXP / xpNeeded, 1);
+    
+    const circumference = 119.38;
+    const offset = circumference - (progress * circumference);
+    
+    DOM.profileProgressCircle.style.strokeDashoffset = offset;
+    lastState.profileXP = xp;
+  }
 }
 
 // ============================================
@@ -423,7 +500,6 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     stopUpdateLoop();
   } else {
-    // Invalidate caches for fresh data on return
     totalRankCache = null;
     achievementCache = null;
     profileCache = null;
